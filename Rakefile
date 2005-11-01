@@ -1,32 +1,22 @@
 require 'rake'
+require 'rake/testtask'
 require 'rake/rdoctask'
-require 'tmpdir'
+	
+desc 'Default: run unit tests.'
+task :default => :test
 
-task :default => :doc
-
-desc 'Generate documentation for the engines plugin.'
-Rake::RDocTask.new(:doc) do |doc|
-  doc.rdoc_dir = 'doc'
-  doc.title    = 'Engines'
-  doc.main     = "README"
-  doc.rdoc_files.include("README", "CHANGELOG", "MIT-LICENSE")
-  doc.rdoc_files.include('lib/**/*.rb')
-  doc.options << '--line-numbers' << '--inline-source'
+desc 'Test the Rails Engines plugin.'
+Rake::TestTask.new(:test) do |t|
+  t.libs << 'lib'
+  t.pattern = 'test/**/*_test.rb'
+  t.verbose = true
 end
-
-desc 'Run the engine plugin tests within their test harness'
-task :cruise do
-  # checkout the project into a temporary directory
-  version = "rails_1.2"
-  test_dir = "#{Dir.tmpdir}/engines_plugin_#{version}_test"
-  puts "Checking out test harness for #{version} into #{test_dir}"
-  `svn co http://svn.rails-engines.org/test/engines/#{version} #{test_dir}`
-
-  # run all the tests in this project
-  Dir.chdir(test_dir)
-  load 'Rakefile'
-  puts "Running all tests in test harness"
-  ['db:migrate', 'test', 'test:plugins'].each do |t|
-    Rake::Task[t].invoke
-  end  
+ 	
+desc 'Generate documentation for the Rails Engines plugin.'
+Rake::RDocTask.new(:rdoc) do |rdoc|
+  rdoc.rdoc_dir = 'rdoc'
+  rdoc.title    = 'Rails Engines'
+  rdoc.options << '--line-numbers --inline-source'
+  rdoc.rdoc_files.include('README')
+  rdoc.rdoc_files.include('lib/**/*.rb')
 end
