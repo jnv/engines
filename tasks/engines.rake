@@ -1,113 +1,33 @@
-namespace :plugins do
-  desc "Display version information about active engines"
-  task :info => :environment do
-    plugins = ENV["PLUGIN"] ? [Rails.plugins[ENV["PLUGINS"]]] : Rails.plugins
-    plugins.each { |p|  puts "#{p.name}: #{p.version}" }
-  end
-end
-
-namespace :db do  
-  namespace :fixtures do
-    namespace :plugins do
-      
-      desc "Load plugin fixtures into the current environment's database."
-      task :load => :environment do
-        require 'active_record/fixtures'
-        ActiveRecord::Base.establish_connection(RAILS_ENV.to_sym)
-        Dir.glob(File.join(RAILS_ROOT, 'vendor', 'plugins', ENV['PLUGIN'] || '**', 
-                 'test', 'fixtures', '*.yml')).each do |fixture_file|
-          Fixtures.create_fixtures(File.dirname(fixture_file), File.basename(fixture_file, '.*'))
-        end
-      end
-      
+desc "Migrate one or all engines, based on the migrations in that engines db/migrate dir"
+task :engine_migrate => :environment do
+  engines_to_migrate = Engines::ActiveEngines
+  fail = false
+  if ENV["ENGINE"]
+    engines_to_migrate = [Engines.get(ENV["ENGINE"])].compact
+    if engines_to_migrate.empty?
+      puts "Couldn't find an engine called '#{ENV["ENGINE"]}'"
+      fail = true
     end
+  elsif ENV["VERSION"]
+    # ignore the VERSION, since it makes no sense in this context; we wouldn't
+    # want to revert ALL engines to the same version because of a misttype
+    puts "Ignoring the given version (#{ENV["VERSION"]})."
+    puts "To control individual engine versions, use the ENGINE=<engine> argument"
+    fail = true
   end
-end
 
-
-# this is just a rip-off from the plugin stuff in railties/lib/tasks/documentation.rake, 
-# because the default plugindoc stuff doesn't support subdirectories like <plugin>/app or
-# <plugin>/component.
-namespace :doc do
-
-  plugins = FileList['vendor/plugins/**'].collect { |plugin| File.basename(plugin) }
-
-  namespace :plugins do
-    # Define doc tasks for each plugin
-    plugins.each do |plugin|
-      desc "Create plugin documentation for '#{plugin}'"
-      task(plugin => :environment) do
-        plugin_base   = "vendor/plugins/#{plugin}"
-        options       = []
-        files         = Rake::FileList.new
-        options << "-o doc/plugins/#{plugin}"
-        options << "--title '#{plugin.titlecase} Plugin Documentation'"
-        options << '--line-numbers' << '--inline-source'
-        options << '-T html'
-
-        files.include("#{plugin_base}/lib/**/*.rb")
-        files.include("#{plugin_base}/app/**/*.rb") # this is the only addition!
-        if File.exists?("#{plugin_base}/README")
-          files.include("#{plugin_base}/README")    
-          options << "--main '#{plugin_base}/README'"
-        end
-        files.include("#{plugin_base}/CHANGELOG") if File.exists?("#{plugin_base}/CHANGELOG")
-
-        options << files.to_s
-
-        sh %(rdoc #{options * ' '})
+  if !fail
+    engines_to_migrate.each do |engine| 
+      Engines::EngineMigrator.current_engine = engine
+      migration_directory = File.join(RAILS_ROOT, engine.root, 'db', 'migrate')
+      if File.exist?(migration_directory)
+        puts "Migrating engine '#{engine.name}'"
+        Engines::EngineMigrator.migrate(migration_directory, ENV["VERSION"] ? ENV["VERSION"].to_i : nil)
+        Rake::Task[:db_schema_dump].invoke if ActiveRecord::Base.schema_format == :ruby
+      else
+        puts "The db/migrate directory for engine '#{engine.name}' appears to be missing."
+        puts "Should be: #{migration_directory}"
       end
     end
   end
-end
-
-namespace :test do
-  task :warn_about_multiple_plugin_testing_with_engines do
-    puts %{-~============== A Moste Polite Warninge ===========================~-
-
-You may experience issues testing multiple plugins at once when using
-the code-mixing features that the engines plugin provides. If you do
-experience any problems, please test plugins individually, i.e.
-
-  $ rake test:plugins PLUGIN=my_plugin
-
-or use the per-type plugin test tasks:
-
-  $ rake test:plugins:units
-  $ rake test:plugins:functionals
-  $ rake test:plugins:integration
-
-Report any issues on http://dev.rails-engines.org. Thanks!
-
--~===============( ... as you were ... )============================~-}
-  end
-  
-  namespace :plugins do
-    desc "Run all plugin unit tests"
-    Rake::TestTask.new(:units => :setup_plugin_fixtures) do |t|
-      t.pattern = "vendor/plugins/#{ENV['PLUGIN'] || "**"}/test/unit/**/*_test.rb"
-      t.verbose = true
-    end
-    
-    desc "Run all plugin functional tests"
-    Rake::TestTask.new(:functionals => :setup_plugin_fixtures) do |t|
-      t.pattern = "vendor/plugins/#{ENV['PLUGIN'] || "**"}/test/functional/**/*_test.rb"
-      t.verbose = true
-    end
-    
-    desc "Integration test engines"
-    Rake::TestTask.new(:integration => :setup_plugin_fixtures) do |t|
-      t.pattern = "vendor/plugins/#{ENV['PLUGIN'] || "**"}/test/integration/**/*_test.rb"
-      t.verbose = true
-    end
-
-    desc "Run the plugin tests in vendor/plugins/**/test (or specify with PLUGIN=name)"
-    task :all => [:warn_about_multiple_plugin_testing_with_engines, 
-                  :units, :functionals, :integration]
-    
-    task :setup_plugin_fixtures => "db:test:prepare" do
-      # mirror all fixtures into a temporary but known directory
-      Engines::Testing.setup_plugin_fixtures
-    end
-  end  
 end
