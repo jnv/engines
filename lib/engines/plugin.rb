@@ -1,125 +1,153 @@
-# An instance of Plugin is created for each plugin loaded by Rails, and
-# stored in the <tt>Engines.plugins</tt> PluginList 
-# (see Engines::RailsExtensions::RailsInitializer for more details).
-#
-#   Engines.plugins[:plugin_name]
-#
-# If this plugin contains paths in directories other than <tt>app/controllers</tt>,
-# <tt>app/helpers</tt>, <tt>app/models</tt> and <tt>components</tt>, authors can
-# declare this by adding extra paths to #code_paths:
-#
-#    Rails.plugin[:my_plugin].code_paths << "app/sweepers" << "vendor/my_lib"
-#
-# Other properties of the Plugin instance can also be set.
-module Engines
-  class Plugin < Rails::Plugin    
-    # Plugins can add code paths to this attribute in init.rb if they 
-    # need plugin directories to be added to the load path, i.e.
-    #
-    #   plugin.code_paths << 'app/other_classes'
-    #
-    # Defaults to ["app/controllers", "app/helpers", "app/models", "components"]
-    attr_accessor :code_paths
+class Plugin
+  
+  # The name of this plugin
+  attr_accessor :name
 
-    # Plugins can add paths to this attribute in init.rb if they need
-    # controllers loaded from additional locations. 
-    attr_accessor :controller_paths
+  # The directory in which this plugin is located
+  attr_accessor :root
   
-    # The directory in this plugin to mirror into the shared directory
-    # under +public+.
-    #
-    # Defaults to "assets" (see default_public_directory).
-    attr_accessor :public_directory   
-    
-    protected
+  # The version of this plugin
+  attr_accessor :version
   
-      # The default set of code paths which will be added to $LOAD_PATH
-      # and Dependencies.load_paths
-      def default_code_paths
-        # lib will actually be removed from the load paths when we call
-        # uniq! in #inject_into_load_paths, but it's important to keep it
-        # around (for the documentation tasks, for instance).
-        %w(app/controllers app/helpers app/models components lib)
-      end
+  # Plugins can add code paths to this attribute in init.rb if they 
+  # need plugin directories to be added to the load path, i.e.
+  #
+  #   plugin.code_paths << 'app/other_classes'
+  #
+  attr_accessor :code_paths
+  
+  # The directory in this plugin to mirror into the shared plugin 
+  # public directory
+  attr_accessor :public_dir
+  
+  def default_code_paths
+    %w(app/controllers app/helpers app/models components lib)
+  end
+  
+  # Attempts to detect the directory to use for public files.
+  # If 'public' exists in the plugin, this will be used. If 'plugin' is missing
+  # but 'assets' is found, 'assets' will be used.
+  def default_public_dir
+    %w(public assets).select { |dir| File.directory?(File.join(root, dir)) }.first || "public"
+  end
+  
+  def initialize(name, path)
+    @name = name
+    @root = path
     
-      # The default set of code paths which will be added to the routing system
-      def default_controller_paths
-        %w(app/controllers components)
-      end
+    @code_paths = default_code_paths
+    @public_dir = default_public_dir
+  end
+  
+  def load
+    #inject_into_load_path
+    #mirror_public_assets
+  end
+  
+  # Adds all directories in the /app and /lib directories within the engine
+  # to the load path
+  def inject_into_load_path
+      
+    # Add relevant paths under the engine root to the load path
+    code_paths.each do |dir| 
+      path = File.join(root, dir)
+      if File.directory?(path)
+        # Add to the load paths
+        index = $LOAD_PATH.index(Engines.rails_final_load_path)
+        $LOAD_PATH.insert(index + 1, path)
 
-      # Attempts to detect the directory to use for public files.
-      # If +assets+ exists in the plugin, this will be used. If +assets+ is missing
-      # but +public+ is found, +public+ will be used.
-      def default_public_directory
-        Engines.select_existing_paths(%w(assets public).map { |p| File.join(directory, p) }).first
-      end
-    
-    public
-  
-    def initialize(directory)
-      super directory
-      @code_paths = default_code_paths
-      @controller_paths = default_controller_paths
-      @public_directory = default_public_directory
-    end
-  
-    # Returns a list of paths this plugin wishes to make available in $LOAD_PATH
-    #
-    # Overwrites the correspondend method in the superclass  
-    def load_paths
-      report_nonexistant_or_empty_plugin! unless valid?
-      select_existing_paths :code_paths
-    end
-    
-    # Extends the superclass' load method to additionally mirror public assets
-    def load(initializer)
-      return if loaded?
-      super initializer
-      add_plugin_view_paths
-      Assets.mirror_files_for(self)
-    end    
-  
-    # for code_paths and controller_paths select those paths that actually 
-    # exist in the plugin's directory
-    def select_existing_paths(name)
-      Engines.select_existing_paths(self.send(name).map { |p| File.join(directory, p) })
-    end    
-
-    def add_plugin_view_paths
-      view_path = File.join(directory, 'app', 'views')
-      if File.exist?(view_path)
-        ActionController::Base.view_paths.insert(1, view_path) # push it just underneath the app
+        # Add to the dependency system, for autoloading.
+        index = ::Dependencies.load_paths.index(Engines.rails_final_dependency_load_path)
+        ::Dependencies.load_paths.insert(index + 1, path)
       end
     end
-
-    # The path to this plugin's public files
-    def public_asset_directory
-      "#{File.basename(Engines.public_directory)}/#{name}"
-    end
     
-    # The path to this plugin's routes file
-    def routes_path
-      File.join(directory, "routes.rb")
-    end
+    # Add controllers to the Routing system specifically. TODO - is this needed?
+    plugin_controllers = File.join(root, 'app', 'controllers')
+    plugin_components = File.join(root, 'components')
+    ActionController::Routing.controller_paths << plugin_controllers if File.directory?(plugin_controllers)
+    ActionController::Routing.controller_paths << plugin_components if File.directory?(plugin_components)
+  end
 
-    # The directory containing this plugin's migrations (<tt>plugin/db/migrate</tt>)
-    def migration_directory
-      File.join(self.directory, 'db', 'migrate')
-    end
+  # Replicates the subdirectories under the plugins's /public or /assets directory into
+  # the corresponding public directory.
+  #
+  # TODO: include /assets
+  def mirror_public_assets
   
-    # Returns the version number of the latest migration for this plugin. Returns
-    # nil if this plugin has no migrations.
-    def latest_migration
-      migrations = Dir[migration_directory+"/*.rb"]
-      return nil if migrations.empty?
-      migrations.map { |p| File.basename(p) }.sort.last.match(/0*(\d+)\_/)[1].to_i
-    end
+    begin
+
+      destination_public_dir = File.join(Engines.public_dir, name)  
+      source_public_dir = File.join(root, "public")
+
+      log.debug "Attempting to copy plugin plugin asset files from '#{source_public_dir}'"
+
+      # if there is no public directory, just return after this file
+      return if !File.exist?(source_public_dir)
+
+      source_files = Dir[source_public_dir + "/**/*"]
+      source_dirs = source_files.select { |d| File.directory?(d) }
+      source_files -= source_dirs  
   
-    # Migrate this plugin to the given version. See Engines::Plugin::Migrator for more
-    # information.   
-    def migrate(version = nil)
-      Engines::Plugin::Migrator.migrate_plugin(self, version)
+      log.debug "source dirs: #{source_dirs.inspect}"
+
+      # Create the engine_files/<something>_engine dir if it doesn't exist
+      if !File.exists?(self.destination_public_dir)
+        # Create <something>_engine dir with a message
+        log.debug "Creating #{self.destination_public_dir} public dir"
+        FileUtils.mkdir_p(self.destination_public_dir)
+      end
+
+      # create all the directories, transforming the old path into the new path
+      source_dirs.uniq.each { |dir|
+        begin        
+          # strip out the base path and add the result to the public path, i.e. replace 
+          #   ../script/../vendor/plugins/engine_name/public/javascript
+          # with
+          #   engine_name/javascript
+          #
+          relative_dir = dir.gsub(File.join(root, "public"), name)
+          target_dir = File.join(Engines.public_dir, relative_dir)
+          unless File.exist?(target_dir)
+            log.debug "Creating directory '#{target_dir}'"
+            FileUtils.mkdir_p(target_dir)
+          end
+        rescue Exception => e
+          raise "Could not create directory #{target_dir}: \n" + e
+        end
+      }
+
+      # copy all the files, transforming the old path into the new path
+      source_files.uniq.each { |file|
+        begin
+          # change the path from the ENGINE ROOT to the public directory root for this engine
+          target = file.gsub(File.join(root, "public"), destination_public_dir)
+          unless File.exist?(target) && FileUtils.identical?(file, target)
+            log.debug "copying file '#{file}' to '#{target}'"
+            FileUtils.cp(file, target)
+          end 
+        rescue Exception => e
+          raise "Could not copy #{file} to #{target}: \n" + e 
+        end
+      }
+    rescue Exception => e
+      log.warn "WARNING: Couldn't create the engine public file structure for engine '#{name}'; Error follows:"
+      log.warn e
     end
   end
-end
 
+  # return the path to this Engine's public files (with a leading '/' for use in URIs)
+  def asset_base_uri
+    "/#{File.basename(Engines.public_dir)}/#{name}"
+  end
+
+  # The directory containing this engines migrations
+  def migration_directory
+    File.join(self.root, 'db', 'migrate')
+  end
+  
+  # Migrate this engine to the given version    
+  def migrate(version = nil)
+    Engines::EngineMigrator.migrate_engine(self, version)
+  end  
+end

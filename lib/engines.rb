@@ -1,135 +1,84 @@
-require 'active_support'
-require File.join(File.dirname(__FILE__), 'engines/plugin')
-require File.join(File.dirname(__FILE__), 'engines/plugin/list')
-require File.join(File.dirname(__FILE__), 'engines/plugin/loader')
-require File.join(File.dirname(__FILE__), 'engines/plugin/locator')
-require File.join(File.dirname(__FILE__), 'engines/assets')
-require File.join(File.dirname(__FILE__), 'engines/rails_extensions/rails')
+module ::Engines
+  # The name of the public directory to mirror public engine assets into
+  mattr_accessor :public_dir
 
-# == Parameters
-#
-# The Engines module has a number of public configuration parameters:
-#
-# [+public_directory+]  The directory into which plugin assets should be
-#                       mirrored. Defaults to <tt>RAILS_ROOT/public/plugin_assets</tt>.
-# [+schema_info_table+] The table to use when storing plugin migration 
-#                       version information. Defaults to +plugin_schema_info+.
-#
-# Additionally, there are a few flags which control the behaviour of
-# some of the features the engines plugin adds to Rails:
-#
-# [+disable_application_view_loading+] A boolean flag determining whether
-#                                      or not views should be loaded from 
-#                                      the main <tt>app/views</tt> directory.
-#                                      Defaults to false; probably only 
-#                                      useful when testing your plugin.
-# [+disable_application_code_loading+] A boolean flag determining whether
-#                                      or not to load controllers/helpers 
-#                                      from the main +app+ directory,
-#                                      if corresponding code exists within 
-#                                      a plugin. Defaults to false; again, 
-#                                      probably only useful when testing 
-#                                      your plugin.
-# [+disable_code_mixing+] A boolean flag indicating whether all plugin
-#                         copies of a particular controller/helper should 
-#                         be loaded and allowed to override each other, 
-#                         or if the first matching file should be loaded 
-#                         instead. Defaults to false.
-#
-module Engines
-  # The set of all loaded plugins
-  mattr_accessor :plugins
-  self.plugins = Engines::Plugin::List.new  
+  # A memo of the bottom of Rails' default load path
+  mattr_accessor :rails_final_load_path
   
-  # List of extensions to load, can be changed in init.rb before calling Engines.init
-  mattr_accessor :rails_extensions
-  self.rails_extensions = %w(active_record action_mailer asset_helpers routing migrations dependencies)
+  # A memo of the bottom of Rails Dependencies load path
+  mattr_accessor :rails_final_dependency_load_path
   
-  # The name of the public directory to mirror public engine assets into.
-  # Defaults to <tt>RAILS_ROOT/public/plugin_assets</tt>.
-  mattr_accessor :public_directory
-  self.public_directory = File.join(RAILS_ROOT, 'public', 'plugin_assets')
+  # For holding the rails configuration object
+  mattr_accessor :rails_config
+  
+  # A reference to the current Rails::Initializer instance
+  mattr_accessor :rails_initializer
+  
+  # A flag to stop searching for views in the application
+  mattr_accessor :disable_app_views_loading
+  
+  # A flag to stop code being mixed in from the application
+  mattr_accessor :disable_app_code_mixing
 
-  # The table in which to store plugin schema information. Defaults to
-  # "plugin_schema_info".
+  # The table in which to store engine schema information
   mattr_accessor :schema_info_table
-  self.schema_info_table = "plugin_schema_info"
 
-  #--
-  # These attributes control the behaviour of the engines extensions
-  #++
+
+  mattr_accessor :original_after_initialize_block
+
   
-  # Set this to true if views should *only* be loaded from plugins
-  mattr_accessor :disable_application_view_loading
-  self.disable_application_view_loading = false
+  mattr_accessor :support_legacy_engines
   
-  # Set this to true if controller/helper code shouldn't be loaded 
-  # from the application
-  mattr_accessor :disable_application_code_loading
-  self.disable_application_code_loading = false
+  # a reference to the currently-loaded plugin. # TODO - remove this?
+  mattr_accessor :current  
   
-  # Set this ti true if code should not be mixed (i.e. it will be loaded
-  # from the first valid path on $LOAD_PATH)
-  mattr_accessor :disable_code_mixing
-  self.disable_code_mixing = false
-  
-  # This is used to determine which files are candidates for the "code
-  # mixing" feature that the engines plugin provides, where classes from
-  # plugins can be loaded, and then code from the application loaded
-  # on top of that code to override certain methods.
-  mattr_accessor :code_mixing_file_types
-  self.code_mixing_file_types = %w(controller helper)
-  
-  class << self
-    def init
-      load_extensions
-      Engines::Assets.initialize_base_public_directory
-    end
+  def self.init
+    self.schema_info_table = default_schema_info_table
     
-    def logger
-      RAILS_DEFAULT_LOGGER
-    end
+    store_load_path_marker
+    store_dependency_load_path_marker
     
-    def load_extensions
-      rails_extensions.each { |name| require "engines/rails_extensions/#{name}" }
-      # load the testing extensions, if we are in the test environment.
-      require "engines/testing" if RAILS_ENV == "test"
-    end
+    #initialize_base_public_directory
+
+    self.original_after_initialize_block = self.rails_config.after_initialize_block
+    self.rails_config.after_initialize {
+      Engines.load_remaining_plugins
+    }
+  end
+
+  # TODO: how will this affect upgrades?
+  # could just get folks to manually rename the table. Or provide an upgrade
+  # migration...?
+  def self.default_schema_info_table
+    "plugin_schema_info"
+  end
+
+  # Stores a record of the last path with Rails added to the load path
+  def self.store_load_path_marker
+    self.rails_final_load_path = $LOAD_PATH.last
+    #log.debug "Rails final load path: #{self.rails_final_load_path}"
+  end
+
+  def self.store_dependency_load_path_marker
+    self.rails_final_dependency_load_path = ::Dependencies.load_paths.last
+    #log.debug "Rails final dependency load path: #{self.rails_final_dependency_load_path}"
+  end
+
+
     
-    def select_existing_paths(paths)
-      paths.select { |path| File.directory?(path) }
-    end  
+  def self.load_remaining_plugins
+    self.rails_initializer.load_all_remaining_plugins if self.rails_config.plugins.last == "*"
+    self.original_after_initialize_block.call if self.original_after_initialize_block
+  end
   
-    # The engines plugin will, by default, mix code from controllers and helpers,
-    # allowing application code to override specific methods in the corresponding
-    # controller or helper classes and modules. However, if other file types should
-    # also be mixed like this, they can be added by calling this method. For example,
-    # if you want to include "things" within your plugin and override them from
-    # your applications, you should use the following layout:
-    #
-    #   app/
-    #    +-- things/
-    #    |       +-- one_thing.rb
-    #    |       +-- another_thing.rb
-    #   ...
-    #   vendor/
-    #       +-- plugins/
-    #                +-- my_plugin/
-    #                           +-- app/
-    #                                +-- things/
-    #                                        +-- one_thing.rb
-    #                                        +-- another_thing.rb
-    #
-    # The important point here is that your "things" are named <whatever>_thing.rb,
-    # and that they are placed within plugin/app/things (the pluralized form of 'thing').
-    # 
-    # It's important to note that you'll also want to ensure that the "things" are
-    # on your load path in your plugin's init.rb:
-    #
-    #   Rails.plugins[:my_plugin].code_paths << "app/things"
-    #
-    def mix_code_from(*types)
-      self.code_mixing_file_types += types.map { |x| x.to_s.singularize }
+  def self.initialize_base_public_directory
+    if !File.exists?(@public_dir)
+      # create the public/engines directory, with a warning message in it.
+      log.debug "Creating public engine files directory '#{@public_dir}'"
+      FileUtils.mkdir(@public_dir)
+      message_file_name = File.join(File.dirname(__FILE__), '..', 'misc', 'public_dir_message.txt')
+      dest_message_file_name = File.join(public_dir, "README")
+      FileUtils.cp(message_file_name, dest_message_file_name) unless File.exist?(target_message_file)
     end
   end  
-end
+end  
