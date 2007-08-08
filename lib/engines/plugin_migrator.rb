@@ -1,5 +1,12 @@
-#require 'active_record/migrations'
-
+# The PluginMigrator class contains the logic to run migrations from
+# within plugin directories. The directory in which a plugin's migrations
+# should be is determined by the Plugin#migration_directory method.
+#
+# To migrate a plugin, you can simple call the migrate method (Plugin#migrate)
+# with the version number that plugin should be at. The plugin's migrations
+# will then be used to migrate up (or down) to the given version.
+#
+# For more information, see Engines::RailsExtensions::Migrations
 class Engines::PluginMigrator < ActiveRecord::Migrator
 
   # We need to be able to set the 'current' engine being migrated.
@@ -10,7 +17,11 @@ class Engines::PluginMigrator < ActiveRecord::Migrator
     self.current_plugin = plugin
     migrate(plugin.migration_directory, version)
   end
-    
+  
+  # Returns the name of the table used to store schema information about
+  # installed plugins.
+  #
+  # See Engines.schema_info_table for more details.
   def self.schema_info_table_name
     ActiveRecord::Base.wrapped_table_name Engines.schema_info_table
   end
@@ -36,6 +47,8 @@ class Engines::PluginMigrator < ActiveRecord::Migrator
     end
   end
 
+  # Sets the version of the plugin in Engines::PluginMigrator.current_plugin to
+  # the given version.
   def set_schema_version(version)
     ActiveRecord::Base.connection.update(<<-ESQL
       UPDATE #{self.class.schema_info_table_name} 
