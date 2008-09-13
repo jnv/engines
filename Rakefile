@@ -92,7 +92,7 @@ namespace :test do
             run ["cd #{vendor_dir}",
                  "mkdir rails",
                  "cd rails",
-                 "curl -s -L http://github.com/rails/rails/tarball/v2.1.0 | tar xzv --strip-components 1"]
+                 "curl -s -L http://github.com/rails/rails/tarball/#{ENV['RAILS']} | tar xzv --strip-components 1"]
           else
             out.puts "    Cloning Rails Tag #{ENV['RAILS']} from GitHub (can be slow - set CURL=true to use curl)"
             run ["cd #{vendor_dir}",
@@ -207,5 +207,5 @@ end
 task :test => "test:mirror_engine_files" do
   puts "> Loading the test application environment and running tests"
   # We use exec here to replace the current running rake process
-  exec("cd #{test_app_dir} && rake")
+  exec("cd #{test_app_dir} && rake db:migrate && rake")
 end
