@@ -2,7 +2,7 @@ require 'rake'
 require 'rake/rdoctask'
 require 'tmpdir'
 
-task :default => :doc
+task :default => :test
 
 desc 'Generate documentation for the engines plugin.'
 Rake::RDocTask.new(:doc) do |doc|
