@@ -89,3 +89,7 @@ Alternatively, you can clone the latest version of Rails ('edge rails') from git
 
   $ rake test RAILS=edge
   
+= Changes in this fork
+
+- Added Gemfile with testing dependencies
+- test_app uses pre-2-3 version of exception_notification plugin
